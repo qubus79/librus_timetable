@@ -43,7 +43,7 @@ Po pierwszym starcie struktura wygląda tak:
 
 Kontener i projekt Compose nazywają się `librus_plan`. Polecenia `docker compose …` uruchamiaj z katalogu `~/docker/librus_plan`.
 
-Otwórz `http://ADRES-SERWERA:8000` i zaloguj się kontem Librus Synergia (login w stylu `1234567u`, nie e-mail z portalu Librus Rodzina). Pierwsze logowanie przypisuje aplikację do tego konta; kolejne konta dodasz w zakładce „Konta”.
+Otwórz `http://ADRES-SERWERA:8765` i zaloguj się kontem Librus Synergia (login w stylu `1234567u`, nie e-mail z portalu Librus Rodzina). Pierwsze logowanie przypisuje aplikację do tego konta; kolejne konta dodasz w zakładce „Konta”.
 
 | Co | Polecenie |
 | --- | --- |
@@ -63,18 +63,18 @@ Kopiuj cały katalog `~/docker/librus_plan/data` (np. `tar czf librus_plan-$(dat
 
 ### Dostęp spoza domu i na iPhonie
 
-W sieci domowej wystarczy `http://ADRES-SERWERA:8000`. Poza domem i do instalacji na ekranie iPhone’a (wymaga HTTPS) najprościej użyć [Tailscale](https://tailscale.com):
+W sieci domowej wystarczy `http://ADRES-SERWERA:8765`. Inny port ustawisz w pliku `.env` obok `docker-compose.yml` (`LIBRUS_PLAN_PORT=9000`) i poleceniem `docker compose up -d`. Poza domem i do instalacji na ekranie iPhone’a (wymaga HTTPS) najprościej użyć [Tailscale](https://tailscale.com):
 
 ```sh
 # na serwerze, po zainstalowaniu i zalogowaniu Tailscale
-sudo tailscale serve --bg 8000
+sudo tailscale serve --bg 8765
 ```
 
 Aplikacja będzie dostępna pod `https://NAZWA-SERWERA.TWOJA-SIEC.ts.net` na każdym urządzeniu z Tailscale. Alternatywa: Cloudflare Tunnel albo własny reverse proxy z certyfikatem. Na iPhonie: Safari → Udostępnij → **Dodaj do ekranu początkowego**.
 
 Gdy aplikacja jest dostępna **wyłącznie** przez HTTPS, ustaw w `docker-compose.yml` `COOKIE_SECURE: "true"` i uruchom `docker compose up -d`. Przy dostępie przez zwykłe `http://` zostaw `false`, inaczej przeglądarka nie zapamięta logowania.
 
-Nie przekierowuj portu 8000 na routerze bezpośrednio do internetu.
+Nie przekierowuj tego portu na routerze bezpośrednio do internetu.
 
 ### Zasady działania
 

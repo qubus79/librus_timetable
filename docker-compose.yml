@@ -8,7 +8,8 @@ services:
     container_name: librus_plan
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Port na serwerze: domyślnie 8765, zmiana przez LIBRUS_PLAN_PORT w pliku .env
+      - "${LIBRUS_PLAN_PORT:-8765}:8000"
     volumes:
       # Dane aplikacji: ~/docker/librus_plan/data
       - ./data:/data:Z   # :Z = etykieta SELinux (Fedora); bez znaczenia na innych systemach
