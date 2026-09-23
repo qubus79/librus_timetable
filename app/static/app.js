@@ -92,9 +92,11 @@ function renderPlan() {
  return html;
 }
 
+// Librus marks substitutions as "old -> new"; show a proper arrow.
+function swap(v) { return esc(v).replace(/\s*-&gt;\s*/g,' → '); }
 function lessonHTML(p,l,index,withName,withTime=true) {
  const badge=l.status==='cancelled'?'<span class="badge danger">Odwołana</span>':l.status==='changed'?'<span class="badge warn">Zmiana</span>':'';
- return `<button class="lesson c-${esc(p.child.color)} ${l.status}" data-action="lesson" data-id="${esc(p.child.id)}" data-index="${index}">${withTime||withName?`<span class="lesson-meta"><span>${withTime?`${esc(l.start)}–${esc(l.end)}`:''}</span>${withName?`<span class="who">${esc(p.child.name)}</span>`:''}</span>`:''}<strong>${esc(l.subject)}</strong>${l.details?`<span class="details">${esc(l.details)}</span>`:''}${badge}</button>`;
+ return `<button class="lesson c-${esc(p.child.color)} ${l.status}" data-action="lesson" data-id="${esc(p.child.id)}" data-index="${index}">${withTime||withName?`<span class="lesson-meta"><span>${withTime?`${esc(l.start)}–${esc(l.end)}`:''}</span>${withName?`<span class="who">${esc(p.child.name)}</span>`:''}</span>`:''}<strong>${swap(l.subject)}</strong>${l.details?`<span class="details">${swap(l.details)}</span>`:''}${badge}</button>`;
 }
 
 function weekView(plans) {

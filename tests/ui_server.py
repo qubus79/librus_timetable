@@ -15,7 +15,7 @@ def fake_fetch(username, password, week):
         raise RuntimeError('invalid credentials')
     monday, offset = date.fromisoformat(week), len(username)
     return [dict(date=(monday + timedelta(days=d)).isoformat(), start=s, end=e, number=n + 1,
-                 subject=SUBJECTS[(n + d + offset) % len(SUBJECTS)], details=f'Sala {10 + n + offset}',
+                 subject=SUBJECTS[(n + d + offset) % len(SUBJECTS)], details='Fidos-Kowalewska Renata -> Zieliński Przemysław · 8 -> 20' if (d, n) == (2, 1) else f'Sala {10 + n + offset}',
                  status='changed' if (d, n) == (2, 1) else 'cancelled' if (d, n) == (3, 4) and offset % 2 else 'regular',
                  note='Zastępstwo' if (d, n) == (2, 1) else '')
             for d in range(5) for n, (s, e) in enumerate(TIMES[:4 + offset % 2])]

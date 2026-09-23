@@ -59,7 +59,7 @@ const URL='http://127.0.0.1:8001', OUT=process.env.SCREENSHOTS||'/tmp';
  await mobile.getByRole('button',{name:'Dzień',exact:true}).click();
  await mobile.screenshot({path:`${OUT}/dzwonek-mobile-light.png`,fullPage:true});
  await mobile.evaluate(()=>navigator.serviceWorker.ready);
- const cached=await mobile.evaluate(async()=>{const c=await caches.open('dzwonek-shell-v2');return (await c.keys()).map(r=>r.url)});
+ const cached=await mobile.evaluate(async()=>{const c=await caches.open('dzwonek-shell-v3');return (await c.keys()).map(r=>r.url)});
  if(cached.some(u=>u.includes('/api/')))throw Error('API cached');
 
  await page.getByRole('button',{name:'Wyloguj się'}).click();
