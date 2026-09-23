@@ -21,11 +21,28 @@ Aplikacja musi łączyć się z Librusem z polskiego adresu IP (Librus nie odpow
 
 Wymagania: Docker z wtyczką Compose (`docker compose version`) i git.
 
+Całość — kod, konfiguracja i dane — trzymamy w `/home/docker/librus_plan`:
+
 ```sh
-git clone https://github.com/qubus79/librus_timetable.git dzwonek
-cd dzwonek
+sudo mkdir -p /home/docker
+sudo chown "$USER" /home/docker
+git clone https://github.com/qubus79/librus_timetable.git /home/docker/librus_plan
+cd /home/docker/librus_plan
 docker compose up -d --build
 ```
+
+Po pierwszym starcie struktura wygląda tak:
+
+```
+/home/docker/librus_plan/
+├── docker-compose.yml
+├── Dockerfile, app/, …      # kod aplikacji
+└── data/                    # wszystkie dane
+    ├── dzwonek.sqlite       # konta, sesje, plany (zaszyfrowane)
+    └── encryption.key       # klucz szyfrowania
+```
+
+Kontener i projekt Compose nazywają się `librus_plan`. Polecenia `docker compose …` uruchamiaj z katalogu `/home/docker/librus_plan`.
 
 Otwórz `http://ADRES-SERWERA:8000` i zaloguj się kontem Librus Synergia (login w stylu `1234567u`, nie e-mail z portalu Librus Rodzina). Pierwsze logowanie przypisuje aplikację do tego konta; kolejne konta dodasz w zakładce „Konta”.
 
@@ -38,12 +55,12 @@ Otwórz `http://ADRES-SERWERA:8000` i zaloguj się kontem Librus Synergia (login
 
 ### Dane i kopia zapasowa
 
-Wszystko jest w katalogu `./data` obok `docker-compose.yml`:
+Wszystko jest w katalogu `/home/docker/librus_plan/data`:
 
 - `dzwonek.sqlite` — konta, sesje i pobrane plany (zaszyfrowane),
 - `encryption.key` — klucz szyfrowania, tworzony automatycznie przy pierwszym starcie.
 
-Kopiuj cały katalog `./data`. Bez `encryption.key` zapisanych kont nie da się odczytać. Jeśli wolisz trzymać klucz poza katalogiem danych, ustaw `ENCRYPTION_KEY` w `docker-compose.yml` (wartość z `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`).
+Kopiuj cały katalog `/home/docker/librus_plan/data` (np. `sudo tar czf librus_plan-$(date +%F).tgz -C /home/docker/librus_plan data`). Bez `encryption.key` zapisanych kont nie da się odczytać. Jeśli wolisz trzymać klucz poza katalogiem danych, ustaw `ENCRYPTION_KEY` w `docker-compose.yml` (wartość z `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`).
 
 ### Dostęp spoza domu i na iPhonie
 

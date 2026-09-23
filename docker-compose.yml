@@ -1,12 +1,16 @@
+# Wszystko (kod i dane) leży w katalogu tego pliku, np. /home/docker/librus_plan.
+name: librus_plan
+
 services:
   dzwonek:
     build: .
-    image: dzwonek:latest
-    container_name: dzwonek
+    image: librus_plan:latest
+    container_name: librus_plan
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
+      # Dane aplikacji: /home/docker/librus_plan/data
       - ./data:/data
     environment:
       TZ: Europe/Warsaw
