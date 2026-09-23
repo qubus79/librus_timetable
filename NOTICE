@@ -1,0 +1,9 @@
+Dzwonek — rodzinny plan lekcji
+Copyright (C) 2026 Dzwonek contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Uses librus-apix by RustySnek and contributors, GPL-3.0.
+https://github.com/RustySnek/librus-apix
+Pinned commit: 56671331ce84d171d8651b9beeafdff74bf445a1
+
+Dzwonek is an independent application, not an official Librus product.
