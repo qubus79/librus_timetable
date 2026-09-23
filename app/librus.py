@@ -3,6 +3,7 @@ from datetime import datetime
 from requests import Session
 from requests.cookies import RequestsCookieJar
 from librus_apix.client import Client, Token
+from librus_apix.student_information import get_student_information
 from librus_apix.timetable import get_timetable
 
 
@@ -13,12 +14,23 @@ class TimeoutSession(Session):
 
 
 def fetch_timetable(username: str, password: str, monday: str) -> list[dict]:
+    return fetch_account(username, password, monday, with_name=False)['lessons']
+
+
+def fetch_account(username: str, password: str, monday: str, with_name: bool = True) -> dict:
     # Upstream has mutable default cookie/token arguments. Always isolate children.
     client = Client(token=Token(), extra_cookies=RequestsCookieJar(), proxy={})
     client._session = TimeoutSession()
     try:
         client.get_token(username, password)
-        return normalize(get_timetable(client, datetime.strptime(monday, '%Y-%m-%d')))
+        lessons = normalize(get_timetable(client, datetime.strptime(monday, '%Y-%m-%d')))
+        name = ''
+        if with_name:
+            try:
+                name = get_student_information(client).name.split()[0]
+            except Exception:
+                pass  # The name is a convenience; the timetable already proved the login.
+        return {'name': name, 'lessons': lessons}
     finally:
         client._session.close()
 

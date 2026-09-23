@@ -18,15 +18,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
-from .librus import fetch_timetable
+from .librus import fetch_account, fetch_timetable
 
 ROOT = Path(__file__).parent
 DATA = Path(os.getenv('DATA_DIR', './data'))
 SECURE = os.getenv('COOKIE_SECURE', 'true').lower() != 'false'
-PASSWORD = os.getenv('APP_PASSWORD', '')
 KEY = os.getenv('ENCRYPTION_KEY', '')
 CIPHER = Fernet(KEY.encode()) if KEY else None
 COOKIE = 'dzwonek_session'
+# Log in once per device: sessions last the browser maximum and renew on use.
+SESSION_TTL = 400 * 86400
 COLORS = {'purple', 'green', 'orange', 'blue', 'pink'}
 sync_lock = threading.Lock()
 
@@ -90,7 +91,7 @@ async def security(request, call_next):
 
 
 def configured():
-    return len(PASSWORD) >= 12 and CIPHER is not None
+    return CIPHER is not None
 
 
 def digest(value):
@@ -102,15 +103,17 @@ def authorized(request: Request):
     with db() as con:
         session = con.execute('SELECT expires FROM sessions WHERE token=?', (digest(token),)).fetchone()
     if not configured() or not session or session['expires'] < time.time():
-        raise HTTPException(401, 'Zaloguj się do swojej rodziny.')
+        raise HTTPException(401, 'Zaloguj się kontem Librus Synergia.')
+    return session['expires']
 
 
 class Login(BaseModel):
-    password: str = Field(max_length=512)
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=512)
 
 
 class Profile(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    name: str = Field(default='', max_length=40)
     emoji: str = Field(default='🌻', min_length=1, max_length=12)
     color: str = 'purple'
     photo: str = Field(default='', max_length=500_000)
@@ -120,8 +123,6 @@ class Profile(BaseModel):
     @field_validator('name')
     @classmethod
     def name_valid(cls, value):
-        if not value.strip():
-            raise ValueError('Podaj imię')
         return value.strip()
 
     @field_validator('color')
@@ -167,20 +168,41 @@ def health():
     return {'status': 'ok'}
 
 
+def set_session_cookie(response, token):
+    response.set_cookie(COOKIE, token, max_age=SESSION_TTL, httponly=True, secure=SECURE, samesite='strict')
+
+
 @app.get('/api/session')
-def session(request: Request):
+def session(request: Request, response: Response):
     try:
-        authorized(request)
-        logged_in = True
+        expires = authorized(request)
     except HTTPException:
-        logged_in = False
-    return {'authenticated': logged_in, 'configured': configured()}
+        return {'authenticated': False, 'configured': configured()}
+    now = time.time()
+    if expires < now + SESSION_TTL - 86400:
+        token = request.cookies.get(COOKIE, '')
+        with db() as con:
+            con.execute('UPDATE sessions SET expires=? WHERE token=?', (now + SESSION_TTL, digest(token)))
+        set_session_cookie(response, token)
+    return {'authenticated': True, 'configured': True}
+
+
+def encrypt_credentials(username, password):
+    return CIPHER.encrypt(json.dumps([username, password]).encode()).decode()
+
+
+def credentials(row):
+    return json.loads(CIPHER.decrypt(row['credentials'].encode()))
+
+
+def find_child(rows, username):
+    return next((r for r in rows if credentials(r)[0].casefold() == username.casefold()), None)
 
 
 @app.post('/api/login')
 def login(body: Login, request: Request, response: Response):
     if not configured():
-        raise HTTPException(503, 'Aplikacja czeka na konfigurację hasła rodzinnego i klucza szyfrowania na serwerze.')
+        raise HTTPException(503, 'Aplikacja czeka na ustawienie ENCRYPTION_KEY na serwerze.')
     ip = request.client.host if request.client else 'unknown'
     now = time.time()
     with db() as con:
@@ -189,14 +211,37 @@ def login(body: Login, request: Request, response: Response):
         if count >= 10:
             raise HTTPException(429, 'Zbyt wiele prób. Spróbuj ponownie za 15 minut.')
         con.execute('INSERT INTO attempts VALUES (?,?)', (ip, now))
-    if not hmac.compare_digest(digest(body.password), digest(PASSWORD)):
-        raise HTTPException(401, 'Nieprawidłowe hasło rodzinne.')
+    username, week = body.username.strip(), monday_of(date.today())
+    rejected = HTTPException(401, 'Librus nie przyjął tego loginu i hasła. Sprawdź dane konta Synergia lub spróbuj później.')
+    with sync_lock:
+        with db() as con:
+            rows = con.execute('SELECT * FROM children ORDER BY rowid').fetchall()
+        child = find_child(rows, username)
+        if child and not hmac.compare_digest(credentials(child)[1].encode(), body.password.encode()):
+            # The Librus password may have changed: accept only what Librus accepts, then remember it.
+            try:
+                lessons = fetch_timetable(username, body.password, week)
+            except Exception:
+                raise rejected
+            with db() as con:
+                con.execute('UPDATE children SET credentials=? WHERE id=?', (encrypt_credentials(username, body.password), child['id']))
+                save_plan(con, child['id'], week, lessons)
+        elif not child and rows:
+            # Only accounts already added to this family may log in.
+            raise HTTPException(401, 'Nieprawidłowy login lub hasło albo to konto nie zostało dodane do Dzwonka.')
+        elif not child:
+            # First login claims this instance and creates the first profile.
+            try:
+                account = fetch_account(username, body.password, week)
+            except Exception:
+                raise rejected
+            create_child(Profile(name=account['name'] or 'Uczeń'), username, body.password, week, account['lessons'])
     token = secrets.token_urlsafe(32)
     with db() as con:
         con.execute('DELETE FROM sessions WHERE expires<?', (now,))
         con.execute('DELETE FROM attempts WHERE ip=?', (ip,))
-        con.execute('INSERT INTO sessions VALUES (?,?)', (digest(token), now + 30 * 86400))
-    response.set_cookie(COOKIE, token, max_age=30 * 86400, httponly=True, secure=SECURE, samesite='strict')
+        con.execute('INSERT INTO sessions VALUES (?,?)', (digest(token), now + SESSION_TTL))
+    set_session_cookie(response, token)
     return {'ok': True}
 
 
@@ -219,49 +264,64 @@ def save_plan(con, child_id, week, lessons):
                 (child_id, week, CIPHER.encrypt(json.dumps(lessons).encode()).decode(), time.time()))
 
 
-def connect(username, password, week):
+def connect(username, password, week, fetch=None):
     try:
-        return fetch_timetable(username, password, week)
+        return (fetch or fetch_timetable)(username, password, week)
     except Exception:
         # Never return upstream messages; they may contain sensitive values.
         raise HTTPException(502, 'Nie udało się pobrać planu z Librusa. Sprawdź login i hasło konta Synergia lub spróbuj później.')
 
 
+def create_child(body, username, password, week, lessons):
+    child_id = secrets.token_hex(8)
+    with db() as con:
+        con.execute('INSERT INTO children VALUES (?,?,?,?,?,?)',
+                    (child_id, body.name, body.emoji, body.color, body.photo, encrypt_credentials(username, password)))
+        save_plan(con, child_id, week, lessons)
+    return child_id
+
+
 @app.post('/api/children', dependencies=[Depends(authorized)], status_code=201)
 def add_child(body: Profile):
-    if not body.username.strip() or not body.password:
+    username = body.username.strip()
+    if not username or not body.password:
         raise HTTPException(422, 'Podaj login i hasło konta Librus Synergia.')
     week = monday_of(date.today())
     with sync_lock:
         with db() as con:
-            if con.execute('SELECT COUNT(*) FROM children').fetchone()[0] >= 8:
-                raise HTTPException(400, 'Możesz dodać maksymalnie 8 profili.')
-        lessons = connect(body.username.strip(), body.password, week)
-        child_id = secrets.token_hex(8)
-        credentials = CIPHER.encrypt(json.dumps([body.username.strip(), body.password]).encode()).decode()
-        with db() as con:
-            con.execute('INSERT INTO children VALUES (?,?,?,?,?,?)',
-                        (child_id, body.name, body.emoji, body.color, body.photo, credentials))
-            save_plan(con, child_id, week, lessons)
+            rows = con.execute('SELECT * FROM children').fetchall()
+        if len(rows) >= 8:
+            raise HTTPException(400, 'Możesz dodać maksymalnie 8 kont.')
+        if find_child(rows, username):
+            raise HTTPException(409, 'To konto Librus jest już dodane.')
+        account = connect(username, body.password, week, fetch_account)
+        body.name = body.name or account['name'] or 'Uczeń'
+        child_id = create_child(body, username, body.password, week, account['lessons'])
     return {'id': child_id}
 
 
 @app.put('/api/children/{child_id}', dependencies=[Depends(authorized)])
 def edit_child(child_id: str, body: Profile):
+    if not body.name:
+        raise HTTPException(422, 'Podaj imię.')
     with sync_lock:
         with db() as con:
             row = con.execute('SELECT * FROM children WHERE id=?', (child_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'Nie znaleziono profilu.')
-        credentials = row['credentials']
+        stored = row['credentials']
         if body.username or body.password:
             if not body.username.strip() or not body.password:
                 raise HTTPException(422, 'Aby zmienić konto, podaj login i hasło.')
+            with db() as con:
+                others = con.execute('SELECT * FROM children WHERE id<>?', (child_id,)).fetchall()
+            if find_child(others, body.username.strip()):
+                raise HTTPException(409, 'To konto Librus jest już dodane.')
             connect(body.username.strip(), body.password, monday_of(date.today()))
-            credentials = CIPHER.encrypt(json.dumps([body.username.strip(), body.password]).encode()).decode()
+            stored = encrypt_credentials(body.username.strip(), body.password)
         with db() as con:
             con.execute('UPDATE children SET name=?,emoji=?,color=?,photo=?,credentials=? WHERE id=?',
-                        (body.name, body.emoji, body.color, body.photo, credentials, child_id))
+                        (body.name, body.emoji, body.color, body.photo, stored, child_id))
             if body.username:
                 con.execute('DELETE FROM plans WHERE child_id=?', (child_id,))
     return {'ok': True}
@@ -292,7 +352,7 @@ def timetable(week: date, refresh: bool = False):
             ttl = 60 if refresh else 300
             if not cached or time.time() - cached['updated'] > ttl:
                 try:
-                    username, password = json.loads(CIPHER.decrypt(child['credentials'].encode()))
+                    username, password = credentials(child)
                     lessons = connect(username, password, monday)
                     with db() as con:
                         save_plan(con, child['id'], monday, lessons)
