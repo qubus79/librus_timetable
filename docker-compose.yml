@@ -11,7 +11,7 @@ services:
       - "8000:8000"
     volumes:
       # Dane aplikacji: /home/docker/librus_plan/data
-      - ./data:/data
+      - ./data:/data:Z   # :Z = etykieta SELinux (Fedora); bez znaczenia na innych systemach
     environment:
       TZ: Europe/Warsaw
       # true tylko wtedy, gdy aplikacja jest dostępna wyłącznie przez HTTPS
