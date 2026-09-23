@@ -10,36 +10,59 @@ Prywatny, polskojęzyczny plan lekcji dla jednej rodziny. FastAPI + interfejs be
 - Widoki: tydzień, dzień i kolumny (konta obok siebie). Filtrowanie jednego ucznia.
 - Zastępstwa, odwołania i szczegóły lekcji. Nawigacja po tygodniach; weekendy pojawiają się, jeśli są zajęcia.
 - Motyw jasny, ciemny lub systemowy. Responsywny interfejs i PWA.
+- Instalacja na własnym serwerze przez Docker Compose.
 - Sesje HttpOnly, ochrona CSRF i ograniczenie prób logowania.
 - Szyfrowanie Fernet danych logowania i zapisanych planów. Zdjęcia przetwarzane do JPEG 256 px bez metadanych.
 - Ostatni pobrany plan pozostaje dostępny przy awarii Librusa. Cache na serwerze: 5 minut, ręczne odświeżenie: minimum 60 sekund.
 
-## Railway
+## Instalacja w domu (Docker Compose)
 
-1. Utwórz usługę z tego repozytorium. Railway wykrywa `Dockerfile`; konfiguracja jest w `railway.json`.
-2. **Przed pierwszym użyciem podłącz Volume w `/data`.** Bez woluminu konta i sesje zostaną utracone po ponownym wdrożeniu.
-3. Ustaw zmienne:
+Aplikacja musi łączyć się z Librusem z polskiego adresu IP (Librus nie odpowiada serwerom w chmurze), dlatego uruchom ją na domowym serwerze, NAS-ie lub Raspberry Pi (obraz działa na amd64 i arm64).
 
-| Zmienna | Wartość |
-| --- | --- |
-| `ENCRYPTION_KEY` | Klucz Fernet, generowany poleceniem poniżej |
-| `DATA_DIR` | `/data` |
-| `COOKIE_SECURE` | `true` |
+Wymagania: Docker z wtyczką Compose (`docker compose version`) i git.
 
 ```sh
-python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+git clone https://github.com/qubus79/librus_timetable.git dzwonek
+cd dzwonek
+docker compose up -d --build
 ```
 
-4. Wygeneruj domenę Railway HTTPS. Port jest pobierany automatycznie ze zmiennej `PORT`.
-5. Otwórz stronę i **od razu** zaloguj się kontem Librus Synergia — pierwsze logowanie przypisuje aplikację do tego konta. Kolejne konta dodasz w zakładce „Konta”.
+Otwórz `http://ADRES-SERWERA:8000` i zaloguj się kontem Librus Synergia (login w stylu `1234567u`, nie e-mail z portalu Librus Rodzina). Pierwsze logowanie przypisuje aplikację do tego konta; kolejne konta dodasz w zakładce „Konta”.
 
-Jedna instancja i jeden worker są celowe: SQLite na woluminie oraz blokada odświeżania chronią spójność. Nie zwiększaj liczby replik bez migracji bazy i blokad do usług współdzielonych. Healthcheck: `/api/health`.
+| Co | Polecenie |
+| --- | --- |
+| Logi | `docker compose logs -f` |
+| Aktualizacja | `git pull && docker compose up -d --build` |
+| Zatrzymanie | `docker compose down` |
+| Stan | `docker compose ps` (STATUS powinien pokazać `healthy`) |
 
-Zachowaj bezpieczną kopię `ENCRYPTION_KEY` i ustaw kopie zapasowe woluminu w Railway. Zmiana klucza bez migracji uniemożliwi odczyt zapisanych kont i planów. Usunięcie profilu usuwa bieżące dane z bazy, ale starsze kopie zapasowe podlegają retencji Railway. Projekt jest przeznaczony dla jednej rodziny: logowanie dowolnym dodanym kontem daje dostęp do wszystkich kont. Jeśli hasło w Librusie się zmieni, zaloguj się nowym — aplikacja sprawdzi je w Librusie i zapamięta. Usunięcie wszystkich kont zwalnia aplikację — następne logowanie dowolnym kontem Librus przypisze ją ponownie. Wylogowanie unieważnia bieżącą sesję.
+### Dane i kopia zapasowa
 
-## iPhone
+Wszystko jest w katalogu `./data` obok `docker-compose.yml`:
 
-Safari → Udostępnij → **Dodaj do ekranu początkowego**. Prywatne plany nie są zapisywane w przeglądarce; bez internetu otwiera się tylko sama aplikacja.
+- `dzwonek.sqlite` — konta, sesje i pobrane plany (zaszyfrowane),
+- `encryption.key` — klucz szyfrowania, tworzony automatycznie przy pierwszym starcie.
+
+Kopiuj cały katalog `./data`. Bez `encryption.key` zapisanych kont nie da się odczytać. Jeśli wolisz trzymać klucz poza katalogiem danych, ustaw `ENCRYPTION_KEY` w `docker-compose.yml` (wartość z `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`).
+
+### Dostęp spoza domu i na iPhonie
+
+W sieci domowej wystarczy `http://ADRES-SERWERA:8000`. Poza domem i do instalacji na ekranie iPhone’a (wymaga HTTPS) najprościej użyć [Tailscale](https://tailscale.com):
+
+```sh
+# na serwerze, po zainstalowaniu i zalogowaniu Tailscale
+sudo tailscale serve --bg 8000
+```
+
+Aplikacja będzie dostępna pod `https://NAZWA-SERWERA.TWOJA-SIEC.ts.net` na każdym urządzeniu z Tailscale. Alternatywa: Cloudflare Tunnel albo własny reverse proxy z certyfikatem. Na iPhonie: Safari → Udostępnij → **Dodaj do ekranu początkowego**.
+
+Gdy aplikacja jest dostępna **wyłącznie** przez HTTPS, ustaw w `docker-compose.yml` `COOKIE_SECURE: "true"` i uruchom `docker compose up -d`. Przy dostępie przez zwykłe `http://` zostaw `false`, inaczej przeglądarka nie zapamięta logowania.
+
+Nie przekierowuj portu 8000 na routerze bezpośrednio do internetu.
+
+### Zasady działania
+
+Jedna instancja i jeden worker są celowe: SQLite oraz blokada odświeżania chronią spójność. Logowanie dowolnym dodanym kontem daje dostęp do wszystkich kont. Jeśli hasło w Librusie się zmieni, zaloguj się nowym — aplikacja sprawdzi je w Librusie i zapamięta. Usunięcie wszystkich kont zwalnia aplikację — następne logowanie dowolnym kontem Librus przypisze ją ponownie. Wylogowanie unieważnia bieżącą sesję.
 
 ## Lokalnie
 
@@ -50,11 +73,10 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 export COOKIE_SECURE=false
-export ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 uvicorn app.main:app --reload
 ```
 
-Dla trwałych danych lokalnych zachowaj wygenerowany klucz między uruchomieniami. Plik `.env` nie jest automatycznie ładowany: wyeksportuj zmienne lub użyj menedżera środowiska. Bez klucza logowanie jest wyłączone.
+Dane i klucz szyfrowania trafiają do `./data`.
 
 ```sh
 python -m pytest -q

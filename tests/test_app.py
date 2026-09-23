@@ -235,3 +235,13 @@ def test_client_isolation(monkeypatch):
     assert clients[0].cookies is not clients[1].cookies
     assert clients[0].token is not clients[1].token
     assert clients[0].cookies.get('test')=='a'
+
+
+def test_key_generated_once_on_data_volume(tmp_path, monkeypatch):
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.delenv('ENCRYPTION_KEY', raising=False)
+    import app.main as m
+    first = importlib.reload(m).load_key()
+    assert (tmp_path / 'encryption.key').read_text().strip() == first
+    assert importlib.reload(m).load_key() == first
+    assert (tmp_path / 'encryption.key').stat().st_mode & 0o077 == 0

@@ -24,8 +24,24 @@ from .librus import fetch_account, fetch_timetable
 ROOT = Path(__file__).parent
 DATA = Path(os.getenv('DATA_DIR', './data'))
 SECURE = os.getenv('COOKIE_SECURE', 'true').lower() != 'false'
-KEY = os.getenv('ENCRYPTION_KEY', '')
-CIPHER = Fernet(KEY.encode()) if KEY else None
+
+
+def load_key():
+    # ENCRYPTION_KEY wins; otherwise a key is generated once and kept on the data volume.
+    if os.getenv('ENCRYPTION_KEY'):
+        return os.environ['ENCRYPTION_KEY']
+    path = DATA / 'encryption.key'
+    DATA.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as file:
+            file.write(Fernet.generate_key().decode())
+    except FileExistsError:
+        pass
+    return path.read_text().strip()
+
+
+CIPHER = Fernet(load_key().encode())
 COOKIE = 'dzwonek_session'
 # Log in once per device: sessions last the browser maximum and renew on use.
 SESSION_TTL = 400 * 86400
@@ -72,7 +88,9 @@ async def security(request, call_next):
         if request.headers.get('x-dzwonek') != '1':
             return JSONResponse({'detail': 'Odśwież aplikację i spróbuj ponownie.'}, status_code=403)
         origin = request.headers.get('origin')
-        if origin and origin.split('://', 1)[-1] != request.headers.get('host'):
+        # Reverse proxies (Tailscale Serve, Cloudflare Tunnel) may rewrite Host but keep X-Forwarded-Host.
+        hosts = {request.headers.get('host'), request.headers.get('x-forwarded-host')}
+        if origin and origin.split('://', 1)[-1] not in hosts:
             return JSONResponse({'detail': 'Niedozwolone źródło żądania.'}, status_code=403)
         try:
             if int(request.headers.get('content-length', 0)) > 1_000_000:
@@ -267,7 +285,7 @@ def save_plan(con, child_id, week, lessons):
 def librus_error(exc, status):
     # Never return upstream messages; they may contain sensitive values.
     if isinstance(exc, RequestException):
-        return HTTPException(504, 'Librus nie odpowiada serwerowi aplikacji. Spróbuj później; jeśli to się powtarza, sprawdź logi Railway.')
+        return HTTPException(504, 'Librus nie odpowiada serwerowi aplikacji. Spróbuj później; jeśli to się powtarza, sprawdź logi serwera.')
     return HTTPException(status, 'Librus nie przyjął tego loginu i hasła. Użyj loginu do Synergii (np. 1234567u), nie adresu e-mail z portalu Librus Rodzina.')
 
 

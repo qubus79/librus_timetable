@@ -1,0 +1,17 @@
+services:
+  dzwonek:
+    build: .
+    image: dzwonek:latest
+    container_name: dzwonek
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      TZ: Europe/Warsaw
+      # true tylko wtedy, gdy aplikacja jest dostępna wyłącznie przez HTTPS
+      # (Tailscale Serve, Cloudflare Tunnel, reverse proxy z certyfikatem).
+      COOKIE_SECURE: "false"
+      # Opcjonalnie: własny klucz. Bez tego klucz powstaje w ./data/encryption.key.
+      # ENCRYPTION_KEY: ""
