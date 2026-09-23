@@ -104,6 +104,9 @@ async def security(request, call_next):
     response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
+    elif request.url.path.startswith('/static/'):
+        # Revalidate on every load (cheap 304 via ETag) so updates are never stuck in a browser cache.
+        response.headers['Cache-Control'] = 'no-cache'
     if SECURE:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     return response

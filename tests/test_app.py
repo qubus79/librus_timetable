@@ -216,6 +216,7 @@ def test_static_and_pwa(setup):
     manifest=c.get('/static/manifest.webmanifest').json()
     for icon in manifest['icons']:assert c.get(icon['src']).status_code==200
     assert c.get('/sw.js').headers['service-worker-allowed']=='/'
+    assert c.get('/static/style.css').headers['cache-control']=='no-cache'
     assert c.get('/api/session').json()=={'authenticated':False,'configured':True}
     assert 'frame-ancestors' in c.get('/').headers['content-security-policy']
 
