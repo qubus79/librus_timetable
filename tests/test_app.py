@@ -140,6 +140,14 @@ def test_failed_connect_does_not_save_credentials(setup,monkeypatch):
     assert result.status_code==401 and 'sensitive-password' not in result.text
 
 
+def test_librus_timeout_is_reported_separately(setup,monkeypatch):
+    import requests
+    c,m=setup
+    def slow(*args):raise requests.ReadTimeout('timed out')
+    monkeypatch.setattr(m,'fetch_account',slow)
+    assert login(c).status_code==504
+
+
 def test_partial_failure_and_stale_plan(setup,monkeypatch):
     c,m=setup
     monkeypatch.setattr(m,'fetch_timetable',lambda u,p,w:sample(w))

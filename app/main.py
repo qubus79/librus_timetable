@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
+from requests import RequestException
 from .librus import fetch_account, fetch_timetable
 
 ROOT = Path(__file__).parent
@@ -212,7 +213,6 @@ def login(body: Login, request: Request, response: Response):
             raise HTTPException(429, 'Zbyt wiele prób. Spróbuj ponownie za 15 minut.')
         con.execute('INSERT INTO attempts VALUES (?,?)', (ip, now))
     username, week = body.username.strip(), monday_of(date.today())
-    rejected = HTTPException(401, 'Librus nie przyjął tego loginu i hasła. Sprawdź dane konta Synergia lub spróbuj później.')
     with sync_lock:
         with db() as con:
             rows = con.execute('SELECT * FROM children ORDER BY rowid').fetchall()
@@ -221,8 +221,8 @@ def login(body: Login, request: Request, response: Response):
             # The Librus password may have changed: accept only what Librus accepts, then remember it.
             try:
                 lessons = fetch_timetable(username, body.password, week)
-            except Exception:
-                raise rejected
+            except Exception as exc:
+                raise librus_error(exc, 401)
             with db() as con:
                 con.execute('UPDATE children SET credentials=? WHERE id=?', (encrypt_credentials(username, body.password), child['id']))
                 save_plan(con, child['id'], week, lessons)
@@ -233,8 +233,8 @@ def login(body: Login, request: Request, response: Response):
             # First login claims this instance and creates the first profile.
             try:
                 account = fetch_account(username, body.password, week)
-            except Exception:
-                raise rejected
+            except Exception as exc:
+                raise librus_error(exc, 401)
             create_child(Profile(name=account['name'] or 'Uczeń'), username, body.password, week, account['lessons'])
     token = secrets.token_urlsafe(32)
     with db() as con:
@@ -264,12 +264,18 @@ def save_plan(con, child_id, week, lessons):
                 (child_id, week, CIPHER.encrypt(json.dumps(lessons).encode()).decode(), time.time()))
 
 
+def librus_error(exc, status):
+    # Never return upstream messages; they may contain sensitive values.
+    if isinstance(exc, RequestException):
+        return HTTPException(504, 'Librus nie odpowiada serwerowi aplikacji. Spróbuj później; jeśli to się powtarza, sprawdź logi Railway.')
+    return HTTPException(status, 'Librus nie przyjął tego loginu i hasła. Użyj loginu do Synergii (np. 1234567u), nie adresu e-mail z portalu Librus Rodzina.')
+
+
 def connect(username, password, week, fetch=None):
     try:
         return (fetch or fetch_timetable)(username, password, week)
-    except Exception:
-        # Never return upstream messages; they may contain sensitive values.
-        raise HTTPException(502, 'Nie udało się pobrać planu z Librusa. Sprawdź login i hasło konta Synergia lub spróbuj później.')
+    except Exception as exc:
+        raise librus_error(exc, 502)
 
 
 def create_child(body, username, password, week, lessons):

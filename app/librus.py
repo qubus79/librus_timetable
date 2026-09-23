@@ -1,10 +1,14 @@
 """Small adapter around the pinned librus-apix API. No credentials in logs."""
+import logging
+import time
 from datetime import datetime
 from requests import Session
 from requests.cookies import RequestsCookieJar
 from librus_apix.client import Client, Token
 from librus_apix.student_information import get_student_information
 from librus_apix.timetable import get_timetable
+
+log = logging.getLogger('dzwonek.librus')
 
 
 class TimeoutSession(Session):
@@ -21,8 +25,10 @@ def fetch_account(username: str, password: str, monday: str, with_name: bool = T
     # Upstream has mutable default cookie/token arguments. Always isolate children.
     client = Client(token=Token(), extra_cookies=RequestsCookieJar(), proxy={})
     client._session = TimeoutSession()
+    stage, started = 'login', time.monotonic()
     try:
         client.get_token(username, password)
+        stage = 'timetable'
         lessons = normalize(get_timetable(client, datetime.strptime(monday, '%Y-%m-%d')))
         name = ''
         if with_name:
@@ -31,6 +37,11 @@ def fetch_account(username: str, password: str, monday: str, with_name: bool = T
             except Exception:
                 pass  # The name is a convenience; the timetable already proved the login.
         return {'name': name, 'lessons': lessons}
+    except Exception as exc:
+        # Diagnostics without secrets: the exception type, the step and Librus' own message.
+        detail = str(exc)[:200].replace(password, '***').replace(username, '***') if password and username else ''
+        log.warning('Librus %s failed after %.1fs: %s %s', stage, time.monotonic() - started, type(exc).__name__, detail)
+        raise
     finally:
         client._session.close()
 
