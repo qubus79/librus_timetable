@@ -1,4 +1,4 @@
-# Wszystko (kod i dane) leży w katalogu tego pliku, np. /home/docker/librus_plan.
+# Wszystko (kod i dane) leży w katalogu tego pliku, np. ~/docker/librus_plan.
 name: librus_plan
 
 services:
@@ -10,7 +10,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Dane aplikacji: /home/docker/librus_plan/data
+      # Dane aplikacji: ~/docker/librus_plan/data
       - ./data:/data:Z   # :Z = etykieta SELinux (Fedora); bez znaczenia na innych systemach
     environment:
       TZ: Europe/Warsaw
