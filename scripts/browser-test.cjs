@@ -39,6 +39,12 @@ const URL='http://127.0.0.1:8001', OUT=process.env.SCREENSHOTS||'/tmp';
  await page.getByRole('button',{name:'Zamknij'}).last().click();
  await page.getByRole('button',{name:'Następny tydzień'}).click();
  await page.getByRole('button',{name:'Dziś',exact:true}).click();
+ // Another day in the current week offers a way back to today.
+ const todayIdx=await page.evaluate(()=>(new Date(new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Warsaw'}).format(new Date())+'T12:00:00').getDay()+6)%7);
+ await page.locator(`.day-tabs button[data-day="${todayIdx===0?1:0}"]`).click();
+ await page.getByRole('button',{name:'Dziś',exact:true}).click();
+ if(await page.locator(`.day-tabs button[data-day="${todayIdx}"].active`).count()!==1)throw Error('Dziś did not return to today');
+ if(await page.getByRole('button',{name:'Dziś',exact:true}).count()!==0)throw Error('Dziś shown on today');
  await page.getByRole('button',{name:'Systemowy'}).count();
  // Session survives reload: no second login.
  await page.reload();

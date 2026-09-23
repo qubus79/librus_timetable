@@ -16,7 +16,8 @@ const paths = {
 };
 function icon(name) { return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name]}"/></svg>`; }
 function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-const today = new Date(new Intl.DateTimeFormat('sv-SE', {timeZone:'Europe/Warsaw'}).format(new Date()) + 'T12:00:00');
+function warsawToday() { return new Date(new Intl.DateTimeFormat('sv-SE', {timeZone:'Europe/Warsaw'}).format(new Date()) + 'T12:00:00'); }
+let today = warsawToday();
 function iso(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function addDays(d,n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
 function monday(d) { return addDays(d,-((d.getDay()+6)%7)); }
@@ -79,7 +80,7 @@ function renderPlan() {
  const children=state.children, plans=selectedPlans(), current=iso(state.week)===iso(monday(today));
  const end=addDays(state.week,6), sameMonth=state.week.getMonth()===end.getMonth();
  const title=`${fmt(state.week,sameMonth?{day:'numeric'}:{day:'numeric',month:'short'})} – ${fmt(end,{day:'numeric',month:'long'})}`;
- let html=`<div class="toolbar"><div class="week-nav"><button class="icon-btn" data-action="prev" aria-label="Poprzedni tydzień">${icon('left')}</button><h1 class="week-title">${title}<small>${current?'Bieżący tydzień':state.week.getFullYear()}</small></h1><button class="icon-btn" data-action="next" aria-label="Następny tydzień">${icon('chevron')}</button>${current?'':`<button class="btn small" data-action="today">Dziś</button>`}</div>
+ let html=`<div class="toolbar"><div class="week-nav"><button class="icon-btn" data-action="prev" aria-label="Poprzedni tydzień">${icon('left')}</button><h1 class="week-title">${title}<small>${current?'Bieżący tydzień':state.week.getFullYear()}</small></h1><button class="icon-btn" data-action="next" aria-label="Następny tydzień">${icon('chevron')}</button>${current&&(state.view==='week'||state.day===(today.getDay()+6)%7)?'':`<button class="btn small" data-action="today">Dziś</button>`}</div>
  <div class="toolbar-right"><div class="segmented" role="group" aria-label="Widok planu">${[['week','grid','Tydzień'],['day','list','Dzień'],['compare','columns','Kolumny']].filter(v=>v[0]!=='compare'||children.length>1).map(([v,i,t])=>`<button data-action="view" data-view="${v}" class="${state.view===v?'active':''}" aria-pressed="${state.view===v}" title="${t}">${icon(i)}<span>${t}</span></button>`).join('')}</div>
  <button class="icon-btn" data-action="refresh" aria-label="Odśwież plan" title="Odśwież plan" ${state.loading?'disabled':''}>${icon('refresh')}</button></div></div>`;
  if(children.length>1) html+=`<div class="chips" role="group" aria-label="Wybierz ucznia"><button class="chip ${state.selected==='all'?'active':''}" data-action="select" data-id="all" aria-pressed="${state.selected==='all'}">Wszyscy</button>${children.map(c=>`<button class="chip ${state.selected===c.id?'active':''}" data-action="select" data-id="${esc(c.id)}" aria-pressed="${state.selected===c.id}">${avatar(c,'xs')}${esc(c.name)}</button>`).join('')}</div>`;
@@ -210,8 +211,10 @@ document.addEventListener('click',async e=>{
  if(a==='prev'||a==='next'||a==='today'){
   const next=a==='today'?monday(today):addDays(state.week,a==='next'?7:-7);
   if(Math.abs(next-today)>365*86400000){toast('Wybierz tydzień w zakresie jednego roku.');return;}
-  state.week=next;state.plans=[];
   if(a==='today')state.day=(today.getDay()+6)%7;
+  // Same week: only the selected day changes, no need to fetch again.
+  if(iso(next)===iso(state.week)&&state.plans.length){render();return;}
+  state.week=next;state.plans=[];
   await load();return;
  }
  if(a==='refresh'){await load(true);if(!state.error)toast('Plan jest aktualny');return;}
@@ -243,6 +246,14 @@ document.addEventListener('submit',async e=>{
  finally{if(f.isConnected){button.disabled=false;button.innerHTML=old;}}
 });
 mobile.addEventListener('change',()=>state.auth&&render());
+// An installed app can stay open overnight; move "today" forward when it returns to the screen.
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden)return;
+ const now=warsawToday();if(iso(now)===iso(today))return;
+ const wasCurrent=iso(state.week)===iso(monday(today));today=now;
+ if(!state.auth)return;
+ if(wasCurrent){state.week=monday(today);state.day=(today.getDay()+6)%7;load();}else render();
+});
 window.addEventListener('offline',()=>{state.error='Jesteś offline. Plan może być nieaktualny.';render();});
 window.addEventListener('online',()=>state.auth&&load());
 async function init(){
