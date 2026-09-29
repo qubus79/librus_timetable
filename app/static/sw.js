@@ -1,4 +1,4 @@
-const CACHE = 'dzwonek-shell-v4';
+const CACHE = 'dzwonek-shell-v5';
 const SHELL = ['/', '/static/style.css', '/static/app.js', '/static/theme.js', '/static/icon-192.png', '/static/icon-512.png', '/static/apple-touch-icon.png', '/static/manifest.webmanifest'];
 // cache:'reload' bypasses the HTTP cache so a new version never stores stale files.
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting())); });

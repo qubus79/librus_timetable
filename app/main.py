@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from requests import RequestException
-from .librus import fetch_account, fetch_timetable
+from .librus import fetch_account, fetch_grades, fetch_timetable
 
 ROOT = Path(__file__).parent
 DATA = Path(os.getenv('DATA_DIR', './data'))
@@ -72,6 +72,8 @@ async def lifespan(app):
         CREATE TABLE IF NOT EXISTS plans (
           child_id TEXT NOT NULL, week TEXT NOT NULL, payload TEXT NOT NULL,
           updated REAL NOT NULL, PRIMARY KEY (child_id, week));
+        CREATE TABLE IF NOT EXISTS grades (
+          child_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS attempts (ip TEXT NOT NULL, created REAL NOT NULL);
         ''')
@@ -351,6 +353,7 @@ def edit_child(child_id: str, body: Profile):
                         (body.name, body.emoji, body.color, body.photo, stored, child_id))
             if body.username:
                 con.execute('DELETE FROM plans WHERE child_id=?', (child_id,))
+                con.execute('DELETE FROM grades WHERE child_id=?', (child_id,))
     return {'ok': True}
 
 
@@ -359,6 +362,7 @@ def delete_child(child_id: str):
     with sync_lock, db() as con:
         con.execute('DELETE FROM children WHERE id=?', (child_id,))
         con.execute('DELETE FROM plans WHERE child_id=?', (child_id,))
+        con.execute('DELETE FROM grades WHERE child_id=?', (child_id,))
     return {'ok': True}
 
 
@@ -391,6 +395,34 @@ def timetable(week: date, refresh: bool = False):
         with db() as con:
             con.execute('DELETE FROM plans WHERE updated<?', (time.time() - 90 * 86400,))
     return {'week': monday, 'plans': results}
+
+
+@app.get('/api/grades', dependencies=[Depends(authorized)])
+def grades(refresh: bool = False):
+    results = []
+    with sync_lock:
+        with db() as con:
+            rows = con.execute('SELECT * FROM children ORDER BY rowid').fetchall()
+        for child in rows:
+            with db() as con:
+                cached = con.execute('SELECT * FROM grades WHERE child_id=?', (child['id'],)).fetchone()
+            error = None
+            # Grades change rarely; an explicit refresh is still throttled.
+            ttl = 60 if refresh else 1800
+            if not cached or time.time() - cached['updated'] > ttl:
+                try:
+                    username, password = credentials(child)
+                    payload = fetch_grades(username, password)
+                    with db() as con:
+                        con.execute('INSERT OR REPLACE INTO grades VALUES (?,?,?)',
+                                    (child['id'], CIPHER.encrypt(json.dumps(payload).encode()).decode(), time.time()))
+                        cached = con.execute('SELECT * FROM grades WHERE child_id=?', (child['id'],)).fetchone()
+                except Exception:
+                    error = 'Nie udało się pobrać ocen z Librusa.'
+            data = json.loads(CIPHER.decrypt(cached['payload'].encode())) if cached else {'subjects': []}
+            results.append({'child': public(child), 'subjects': data['subjects'],
+                            'updated': cached['updated'] if cached else None, 'error': error})
+    return {'results': results}
 
 
 @app.get('/')

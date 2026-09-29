@@ -8,6 +8,7 @@ Prywatny, polskojęzyczny plan lekcji dla jednej rodziny. FastAPI + interfejs be
 - Pierwsze logowanie zakłada aplikację i dodaje to konto. Później zalogować się może tylko konto już dodane w zakładce „Konta”.
 - Do 8 kont (np. każde dziecko osobno), z imieniem pobieranym z Librusa, kolorem i opcjonalnym zdjęciem.
 - Widoki: tydzień, dzień i kolumny (konta obok siebie). Filtrowanie jednego ucznia.
+- Oceny: zakładka z listą przedmiotów, kolorowymi ocenami, średnią (z Librusa albo ważoną), ocenami opisowymi i szczegółami; na planie pasek „Nowe oceny” z ostatnich 7 dni. Oceny odświeżają się co 30 minut.
 - Zastępstwa, odwołania i szczegóły lekcji. Nawigacja po tygodniach; weekendy pojawiają się, jeśli są zajęcia.
 - Motyw jasny, ciemny lub systemowy. Responsywny interfejs i PWA.
 - Instalacja na własnym serwerze przez Docker Compose.

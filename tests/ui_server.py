@@ -21,7 +21,30 @@ def fake_fetch(username, password, week):
             for d in range(5) for n, (s, e) in enumerate(TIMES[:4 + offset % 2])]
 
 
+def fake_grades(username, password):
+    if password == 'incorrect':
+        raise RuntimeError('invalid credentials')
+    today, offset = date.today(), len(username)
+    def g(grade, days_ago, category='Sprawdzian', weight=3, counts=True, comment=''):
+        return dict(grade=grade, date=(today - timedelta(days=days_ago)).isoformat(), category=category, teacher='Anna Nowak',
+                    weight=weight, counts=counts, semester=1, comment=comment)
+    subjects = [
+        {'name': 'Matematyka', 'average': {'1': '', '2': '', 'year': ''},
+         'grades': [g('5', 20), g('4+', 12, 'Kartkówka', 2), g('3-', 6, 'Odpowiedź', 1), g('np', 3, 'Nieprzygotowanie', 0, False)]},
+        {'name': 'Język polski', 'average': {'1': '4.60', '2': '', 'year': '4.60'},
+         'grades': [g('6', 2, 'Wypracowanie', 3, True, 'Bardzo ciekawa interpretacja wiersza'), g('4', 15)]},
+        {'name': 'Historia', 'average': {'1': '', '2': '', 'year': ''}, 'grades': [g('2', 9 + offset), g('1', 30)]},
+    ]
+    for s in subjects:
+        s['descriptive'] = []
+    subjects.append({'name': 'Edukacja wczesnoszkolna', 'average': {'1': '', '2': '', 'year': ''}, 'grades': [],
+                     'descriptive': [dict(grade='T', date=(today - timedelta(days=4)).isoformat(), teacher='Jolanta M.', semester=1,
+                                          comment='Czyta płynnie i ze zrozumieniem, chętnie pracuje w grupie.')]})
+    return {'subjects': subjects}
+
+
 main.fetch_timetable = fake_fetch
+main.fetch_grades = fake_grades
 main.fetch_account = lambda u, p, w: {'name': u.split('.')[0].capitalize(), 'lessons': fake_fetch(u, p, w)}
 if __name__ == '__main__':
     import uvicorn

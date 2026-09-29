@@ -26,6 +26,13 @@ def setup(tmp_path, monkeypatch):
         return sample(w)
     monkeypatch.setattr(m, 'fetch_timetable', fake_timetable)
     monkeypatch.setattr(m, 'fetch_account', lambda u, p, w: {'name': 'Staś', 'lessons': m.fetch_timetable(u, p, w)})
+    def fake_grades(u, p):
+        if librus.get(u) != p:
+            raise RuntimeError('invalid credentials')
+        return {'subjects': [{'name': 'Fizyka', 'average': {'1': '4.5', '2': '', 'year': ''},
+                              'grades': [dict(grade='5', date='2026-09-20', category='Sprawdzian', teacher='Nowak',
+                                              weight=3, counts=True, semester=1, comment='')], 'descriptive': []}]}
+    monkeypatch.setattr(m, 'fetch_grades', fake_grades)
     m.LIBRUS = librus
     with TestClient(m.app) as client:
         client.headers['X-Dzwonek'] = '1'
@@ -246,3 +253,55 @@ def test_key_generated_once_on_data_volume(tmp_path, monkeypatch):
     assert (tmp_path / 'encryption.key').read_text().strip() == first
     assert importlib.reload(m).load_key() == first
     assert (tmp_path / 'encryption.key').stat().st_mode & 0o077 == 0
+
+
+def test_grades_endpoint_cache_encryption_and_cleanup(setup, monkeypatch):
+    c, m = setup
+    assert c.get('/api/grades').status_code == 401
+    login(c)
+    result = c.get('/api/grades').json()['results']
+    assert result[0]['subjects'][0]['name'] == 'Fizyka' and result[0]['error'] is None
+    with m.db() as db:
+        assert 'Fizyka' not in db.execute('SELECT payload FROM grades').fetchone()[0]
+    calls = []
+    monkeypatch.setattr(m, 'fetch_grades', lambda u, p: calls.append(1) or {'subjects': []})
+    c.get('/api/grades')
+    assert calls == []  # served from cache
+    with m.db() as db:
+        db.execute('UPDATE grades SET updated=1')
+    def down(u, p): raise RuntimeError('secret-down')
+    monkeypatch.setattr(m, 'fetch_grades', down)
+    stale = c.get('/api/grades').json()['results'][0]
+    assert stale['error'] and stale['subjects'][0]['name'] == 'Fizyka' and 'secret' not in str(stale)
+    child_id = c.get('/api/children').json()[0]['id']
+    c.delete('/api/children/' + child_id)
+    with m.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM grades').fetchone()[0] == 0
+
+
+def test_normalize_grades_upstream_shape(monkeypatch):
+    from collections import defaultdict
+    import app.librus as librus
+    from librus_apix.grades import Gpa, Grade, GradeDescriptive
+    desc = 'Ocena: 4+\nPrzedmiot: Matematyka\nKategoria: Kartkówka\nData: 2026-09-10\nNauczyciel: Kowalska\nLicz do średniej: tak\nWaga: 2\nKomentarz: Dobra praca'
+    numeric = [defaultdict(list), defaultdict(list)]
+    numeric[0]['Matematyka'] = [Grade('Matematyka', '4+', True, '2026-09-10', 'x', desc, 1, 'Kartkówka', 'Kowalska', 2),
+                                Grade('Matematyka', 'np', False, '2026-09-01', 'x', 'Ocena: np', 1, 'Nieprzygotowanie', 'Kowalska', 0)]
+    averages = defaultdict(list, {'Matematyka': [Gpa(1, '4.25', 'Matematyka'), Gpa(2, '-', 'Matematyka'), Gpa(0, '4.25', 'Matematyka')],
+                                  'Religia': [Gpa(1, '-', 'Religia'), Gpa(2, '-', 'Religia'), Gpa(0, '-', 'Religia')]})
+    descriptive = [defaultdict(list), defaultdict(list)]
+    descriptive[0]['Edukacja wczesnoszkolna'] = [GradeDescriptive('Edukacja wczesnoszkolna', 'T', '2026-09-15', '', 'Ocena: T\nKomentarz: Czyta płynnie', 1, 'Mroczkowska')]
+    data = {s['name']: s for s in librus.normalize_grades(numeric, averages, descriptive)}
+    assert 'Religia' not in data  # nothing to show
+    math = data['Matematyka']
+    assert [g['grade'] for g in math['grades']] == ['np', '4+']  # sorted by date
+    assert math['grades'][1] | {} == dict(grade='4+', date='2026-09-10', category='Kartkówka', teacher='Kowalska', weight=2,
+                                          counts=True, semester=1, comment='Dobra praca')
+    assert math['average'] == {'1': '4.25', '2': '', 'year': '4.25'}
+    assert data['Edukacja wczesnoszkolna']['descriptive'][0]['comment'] == 'Czyta płynnie'
+    # No grade table at all (start of the year) is an empty list, not an error.
+    from librus_apix.exceptions import ParseError
+    monkeypatch.setattr(librus.Client, 'get_token', lambda self, u, p: None)
+    def empty(client, sort): raise ParseError('Error in parsing grades')
+    monkeypatch.setattr(librus, 'get_grades', empty)
+    assert librus.fetch_grades('a', 'b') == {'subjects': []}

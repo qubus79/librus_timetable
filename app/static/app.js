@@ -12,7 +12,7 @@ const paths = {
  sun:'M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
  moon:'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8', monitor:'M3 4h18v12H3zM8 20h8M12 16v4',
  grid:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z', list:'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
- columns:'M3 4h7v16H3zM14 4h7v16h-7z', lock:'M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z'
+ columns:'M3 4h7v16H3zM14 4h7v16h-7z', award:'M12 15a6 6 0 1 0 0-12 6 6 0 0 0 0 12M8.2 13.9L7 22l5-3 5 3-1.2-8.1', lock:'M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z'
 };
 function icon(name) { return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name]}"/></svg>`; }
 function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -27,7 +27,10 @@ const COLORS = [['purple','Fioletowy'],['blue','Niebieski'],['green','Zielony'],
 const THEMES = [['system','monitor','Systemowy'],['light','sun','Jasny'],['dark','moon','Ciemny']];
 const mobile = matchMedia('(max-width:760px)');
 const state = {checked:false, auth:false, configured:true, children:[], plans:[], week:monday(today), selected:'all',
- view:store.get('view', mobile.matches?'day':'week'), page:'plan', day:Math.min((today.getDay()+6)%7,6), loading:false, error:'', loadId:0, theme:store.get('theme','system')};
+ view:store.get('view', mobile.matches?'day':'week'), page:'plan', day:Math.min((today.getDay()+6)%7,6), loading:false, error:'', loadId:0, theme:store.get('theme','system'),
+ grades:[], gradesLoaded:false, gradesLoading:false, gradesId:0, gradeRefs:[],
+ // Polish school year: semester 1 runs September–January, semester 2 February–August.
+ semester:String([1,2,3,4,5,6,7].includes(today.getMonth())?2:1)};
 
 function applyTheme() {
  const root=document.documentElement;
@@ -43,7 +46,7 @@ async function api(path, options = {}) {
  catch { throw new Error('Brak połączenia. Sprawdź internet i spróbuj ponownie.'); }
  const result = await response.json().catch(()=>({}));
  if (!response.ok) {
-   if (response.status===401 && path!=='/login') { Object.assign(state,{auth:false,children:[],plans:[],selected:'all',page:'plan',loading:false});state.loadId++;modal.open&&modal.close();render(); }
+   if (response.status===401 && path!=='/login') { Object.assign(state,{auth:false,children:[],plans:[],grades:[],gradesLoaded:false,selected:'all',page:'plan',loading:false});state.loadId++;state.gradesId++;modal.open&&modal.close();render(); }
    throw new Error(typeof result.detail==='string'?result.detail:'Sprawdź poprawność wprowadzonych danych.');
  }
  return result;
@@ -55,14 +58,16 @@ function themeButton() { const t=THEMES.find(t=>t[0]===state.theme)||THEMES[0]; 
 function selectedPlans() { return state.plans.filter(p => state.selected==='all'||p.child.id===state.selected); }
 function dayDate() { return addDays(state.week,state.day); }
 
+const PAGES = [['plan','calendar','Plan'],['grades','award','Oceny'],['settings','users','Konta']];
 function render() {
  if(!state.checked){app.innerHTML=`<div class="splash" role="status" aria-label="Ładowanie"><span class="spinner"></span></div>`;return;}
  if(!state.auth){renderLogin();return;}
- const settings=state.page==='settings';
+ state.gradeRefs=[];
+ const page={plan:renderPlan,grades:renderGrades,settings:renderSettings}[state.page]||renderPlan;
  app.innerHTML=`<div class="shell"><header class="topbar"><div class="topbar-inner">${brand()}
- <nav class="tabs" aria-label="Menu główne"><button data-action="plan" class="${!settings?'active':''}" ${!settings?'aria-current="page"':''}>${icon('calendar')}<span>Plan</span></button><button data-action="settings" class="${settings?'active':''}" ${settings?'aria-current="page"':''}>${icon('users')}<span>Konta</span></button></nav>
+ <nav class="tabs" aria-label="Menu główne">${PAGES.map(([p,i,t])=>`<button data-action="page" data-page="${p}" class="${state.page===p?'active':''}" ${state.page===p?'aria-current="page"':''}>${icon(i)}<span>${t}</span></button>`).join('')}</nav>
  <div class="topbar-actions">${themeButton()}<button class="icon-btn" data-action="logout" aria-label="Wyloguj się" title="Wyloguj się">${icon('logout')}</button></div></div></header>
- <main class="content">${state.error?`<div class="banner error" role="alert">${esc(state.error)}</div>`:''}${settings?renderSettings():renderPlan()}</main></div>`;
+ <main class="content">${state.error?`<div class="banner error" role="alert">${esc(state.error)}</div>`:''}${page()}</main></div>`;
 }
 
 function renderLogin() {
@@ -83,7 +88,7 @@ function renderPlan() {
  let html=`<div class="toolbar"><div class="week-nav"><button class="icon-btn" data-action="prev" aria-label="Poprzedni tydzień">${icon('left')}</button><h1 class="week-title">${title}<small>${current?'Bieżący tydzień':state.week.getFullYear()}</small></h1><button class="icon-btn" data-action="next" aria-label="Następny tydzień">${icon('chevron')}</button>${current&&(state.view==='week'||state.day===(today.getDay()+6)%7)?'':`<button class="btn small" data-action="today">Dziś</button>`}</div>
  <div class="toolbar-right"><div class="segmented" role="group" aria-label="Widok planu">${[['week','grid','Tydzień'],['day','list','Dzień'],['compare','columns','Kolumny']].filter(v=>v[0]!=='compare'||children.length>1).map(([v,i,t])=>`<button data-action="view" data-view="${v}" class="${state.view===v?'active':''}" aria-pressed="${state.view===v}" title="${t}">${icon(i)}<span>${t}</span></button>`).join('')}</div>
  <button class="icon-btn" data-action="refresh" aria-label="Odśwież plan" title="Odśwież plan" ${state.loading?'disabled':''}>${icon('refresh')}</button></div></div>`;
- if(children.length>1) html+=`<div class="chips" role="group" aria-label="Wybierz ucznia"><button class="chip ${state.selected==='all'?'active':''}" data-action="select" data-id="all" aria-pressed="${state.selected==='all'}">Wszyscy</button>${children.map(c=>`<button class="chip ${state.selected===c.id?'active':''}" data-action="select" data-id="${esc(c.id)}" aria-pressed="${state.selected===c.id}">${avatar(c,'xs')}${esc(c.name)}</button>`).join('')}</div>`;
+ html+=childChips()+newGradesBar();
  if(!children.length&&!state.loading) return html+`<div class="panel empty"><h2>Brak kont</h2><p>Dodaj konto Librus Synergia, aby zobaczyć plan lekcji.</p><button class="btn primary" data-action="add">${icon('plus')}Dodaj konto</button></div>`;
  if(state.loading&&!state.plans.length) return html+`<div class="panel loading" role="status"><span class="spinner"></span>Pobieranie planu…</div>`;
  for(const p of plans) if(p.error) html+=`<div class="banner warn">${children.length>1?`<b>${esc(p.child.name)}:</b> `:''}${esc(p.error)} ${p.updated?'Wyświetlany jest zapisany plan.':'Brak zapisanego planu na ten tydzień.'}</div>`;
@@ -91,6 +96,90 @@ function renderPlan() {
  const updated=plans.filter(p=>p.updated).map(p=>p.updated);
  html+=`<p class="updated">${state.loading?'Odświeżanie…':updated.length?'Zaktualizowano '+new Date(Math.min(...updated)*1000).toLocaleString('pl-PL',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</p>`;
  return html;
+}
+
+function childChips() {
+ const children=state.children;
+ if(children.length<2)return '';
+ return `<div class="chips" role="group" aria-label="Wybierz ucznia"><button class="chip ${state.selected==='all'?'active':''}" data-action="select" data-id="all" aria-pressed="${state.selected==='all'}">Wszyscy</button>${children.map(c=>`<button class="chip ${state.selected===c.id?'active':''}" data-action="select" data-id="${esc(c.id)}" aria-pressed="${state.selected===c.id}">${avatar(c,'xs')}${esc(c.name)}</button>`).join('')}</div>`;
+}
+
+/* ---- Grades ---- */
+// Same rules as librus-apix Grade.value: "5+" = 5.5, "4-" = 3.75; anything else is not a number.
+function gradeNum(grade) { const m=/^([0-6])([+-]?)$/.exec(String(grade).trim()); return m?Number(m[1])+(m[2]==='+'?.5:m[2]==='-'?-.25:0):null; }
+function gradeClass(grade) { const m=/^([1-6])/.exec(String(grade).trim()); return m&&gradeNum(grade)!==null?'g'+m[1]:'g-other'; }
+function weightedAverage(grades) {
+ let sum=0,weights=0;
+ for(const g of grades){const v=gradeNum(g.grade);if(g.counts&&v!==null&&g.weight>0){sum+=v*g.weight;weights+=g.weight;}}
+ return weights?sum/weights:null;
+}
+function shortDate(value) { const d=new Date(value+'T12:00:00'); return isNaN(d)?esc(value):fmt(d,{day:'numeric',month:'short'}); }
+// Buttons point into state.gradeRefs, rebuilt on every render.
+function gradeRef(child,subject,item,descriptive=false) { state.gradeRefs.push({child,subject,item,descriptive}); return state.gradeRefs.length-1; }
+function gradeChip(child,subject,g) {
+ return `<button class="grade-chip ${gradeClass(g.grade)} ${g.counts?'':'no-count'}" data-action="grade" data-ref="${gradeRef(child,subject,g)}" title="${esc(g.category||'Ocena')} · ${esc(g.date)}">${esc(g.grade)}</button>`;
+}
+function selectedGrades() { return state.grades.filter(r=>state.selected==='all'||r.child.id===state.selected); }
+function allGrades(results) { return results.flatMap(r=>r.subjects.flatMap(s=>s.grades.map(g=>({child:r.child,subject:s,g})))); }
+
+function newGradesBar() {
+ if(!state.gradesLoaded)return '';
+ const since=iso(addDays(today,-7));
+ const recent=allGrades(selectedGrades()).filter(x=>x.g.date>=since).sort((a,b)=>b.g.date.localeCompare(a.g.date));
+ if(!recent.length)return '';
+ const many=state.children.length>1&&state.selected==='all';
+ return `<div class="new-grades"><button class="new-grades-label" data-action="page" data-page="grades">${icon('award')}Nowe oceny</button>${recent.map(x=>`<button class="new-grade c-${esc(x.child.color)}" data-action="grade" data-ref="${gradeRef(x.child,x.subject,x.g)}"><span class="grade-chip ${gradeClass(x.g.grade)}">${esc(x.g.grade)}</span><span><b>${esc(x.subject.name)}</b><small>${many?esc(x.child.name)+' · ':''}${shortDate(x.g.date)}</small></span></button>`).join('')}</div>`;
+}
+
+function renderGrades() {
+ let html=`<div class="toolbar"><h1 class="page-title">Oceny</h1><div class="toolbar-right"><div class="segmented" role="group" aria-label="Semestr">${[['1','Sem. 1'],['2','Sem. 2'],['year','Rok']].map(([v,t])=>`<button data-action="semester" data-semester="${v}" class="${state.semester===v?'active':''}" aria-pressed="${state.semester===v}">${t}</button>`).join('')}</div>
+ <button class="icon-btn" data-action="refresh-grades" aria-label="Odśwież oceny" title="Odśwież oceny" ${state.gradesLoading?'disabled':''}>${icon('refresh')}</button></div></div>`;
+ html+=childChips();
+ if(!state.children.length) return html+`<div class="panel empty"><h2>Brak kont</h2><p>Dodaj konto Librus Synergia, aby zobaczyć oceny.</p></div>`;
+ if(!state.gradesLoaded) return html+`<div class="panel loading" role="status"><span class="spinner"></span>Pobieranie ocen…</div>`;
+ const results=selectedGrades(), many=results.length>1;
+ const recent=allGrades(results).sort((a,b)=>b.g.date.localeCompare(a.g.date)).slice(0,8);
+ if(recent.length) html+=`<section class="panel recent"><h2 class="section-title">Ostatnie oceny</h2><div class="recent-list">${recent.map(x=>`<button class="recent-item" data-action="grade" data-ref="${gradeRef(x.child,x.subject,x.g)}"><span class="grade-chip ${gradeClass(x.g.grade)} ${x.g.counts?'':'no-count'}">${esc(x.g.grade)}</span><span class="recent-text"><b>${esc(x.subject.name)}</b><small>${many?`${esc(x.child.name)} · `:''}${esc(x.g.category||'Ocena')}</small></span><span class="recent-date">${shortDate(x.g.date)}</span></button>`).join('')}</div></section>`;
+ for(const r of results) html+=gradesForChild(r,many);
+ const updated=results.filter(r=>r.updated).map(r=>r.updated);
+ html+=`<p class="updated">${state.gradesLoading?'Odświeżanie…':updated.length?'Zaktualizowano '+new Date(Math.min(...updated)*1000).toLocaleString('pl-PL',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</p>`;
+ return html;
+}
+
+function gradesForChild(r,many) {
+ const sem=state.semester, inSem=x=>sem==='year'||String(x.semester)===sem;
+ let html=many?`<h2 class="child-heading">${avatar(r.child,'xs')}${esc(r.child.name)}</h2>`:'';
+ if(r.error) html+=`<div class="banner warn">${esc(r.error)} ${r.updated?'Wyświetlane są zapisane oceny.':''}</div>`;
+ const rows=r.subjects.map(s=>{
+  const grades=s.grades.filter(inSem), desc=s.descriptive.filter(inSem);
+  const librusAvg=s.average[sem], localAvg=weightedAverage(grades);
+  const avg=librusAvg&&librusAvg!=='0.00'?librusAvg.replace('.',','):localAvg!==null?localAvg.toFixed(2).replace('.',','):'';
+  if(!grades.length&&!desc.length&&!avg)return '';
+  return `<div class="subject-row"><div class="subject-name">${esc(s.name)}<small>${grades.length?`${grades.length} ${grades.length===1?'ocena':grades.length<5?'oceny':'ocen'}`:desc.length?'oceny opisowe':'brak ocen'}</small></div>
+  <div class="subject-avg ${avg?gradeClass(Math.round(parseFloat(avg.replace(',','.')))):''}" title="Średnia">${avg||(grades.length?'—':'')}</div>
+  ${grades.length?`<div class="grade-list">${grades.map(g=>gradeChip(r.child,s,g)).join('')}</div>`:''}
+  ${desc.map(d=>`<button class="desc-grade" data-action="grade" data-ref="${gradeRef(r.child,s,d,true)}"><b>${esc(d.grade)}</b>${d.comment?` <span>${esc(d.comment)}</span>`:''}</button>`).join('')}</div>`;
+ }).join('');
+ return html+(rows?`<section class="panel subjects">${rows}</section>`:`<div class="panel empty"><h2>Brak ocen</h2><p>${sem==='year'?'W tym roku szkolnym':'W tym semestrze'} nie ma jeszcze ocen.</p></div>`);
+}
+
+function gradeDialog(ref) {
+ const {child,subject,item:g,descriptive}=state.gradeRefs[ref];
+ const facts=[['Data',g.date?fmt(new Date(g.date+'T12:00:00'),{weekday:'long',day:'numeric',month:'long'}):''],['Kategoria',g.category],['Waga',descriptive?'':String(g.weight??'')],
+  ['Do średniej',descriptive?'':g.counts?'tak':'nie'],['Nauczyciel',g.teacher],['Semestr',String(g.semester||'')],['Komentarz',g.comment]].filter(([,v])=>v);
+ showDialog(subject.name,`<p class="muted">${esc(child.name)}</p><div class="grade-hero"><span class="grade-chip large ${descriptive?'g-other':gradeClass(g.grade)}">${esc(g.grade)}</span></div>
+ <dl class="facts">${facts.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v).replace(/\n/g,'<br>')}</dd>`).join('')}</dl><div class="form-actions"><button class="btn primary" data-action="close">Zamknij</button></div>`);
+}
+
+async function loadGrades(refresh=false){
+ const id=++state.gradesId;
+ state.gradesLoading=true;if(state.page==='grades')render();
+ try{
+  const result=await api(`/grades?refresh=${refresh}`);
+  if(id!==state.gradesId)return;
+  state.grades=result.results;state.gradesLoaded=true;
+ }catch(e){if(id!==state.gradesId)return;if(state.page==='grades')toast(e.message);}
+ if(id===state.gradesId){state.gradesLoading=false;if(state.auth)render();}
 }
 
 // Librus marks substitutions as "old -> new"; show a proper arrow.
@@ -173,6 +262,8 @@ async function load(refresh=false){
   if(!children.some(c=>c.id===state.selected))state.selected='all';
  }catch(e){if(id!==state.loadId)return;state.error=state.auth?e.message:'';}
  if(id===state.loadId){state.loading=false;render();}
+ // Grades load in the background so the timetable is never slowed down by them.
+ if(id===state.loadId&&state.auth&&state.children.length&&!state.gradesLoaded&&!state.gradesLoading)loadGrades();
 }
 
 async function changePhoto(file){
@@ -197,7 +288,10 @@ document.addEventListener('click',async e=>{
  const a=b.dataset.action;
  if(a==='close'){modal.close();return;}
  if(a==='add'||a==='edit'){profileDialog(a==='edit'?b.dataset.id:null);return;}
- if(a==='plan'||a==='settings'){state.page=a;render();return;}
+ if(a==='page'){state.page=b.dataset.page;window.scrollTo(0,0);render();if(state.page==='grades'&&!state.gradesLoaded&&!state.gradesLoading)loadGrades();return;}
+ if(a==='semester'){state.semester=b.dataset.semester;render();return;}
+ if(a==='grade'){gradeDialog(Number(b.dataset.ref));return;}
+ if(a==='refresh-grades'){await loadGrades(true);if(state.gradesLoaded)toast('Oceny są aktualne');return;}
  if(a==='select'){state.selected=b.dataset.id;render();return;}
  if(a==='view'){state.view=b.dataset.view;store.set('view',state.view);render();return;}
  if(a==='day'){state.day=Number(b.dataset.day);render();return;}
@@ -219,15 +313,15 @@ document.addEventListener('click',async e=>{
  }
  if(a==='refresh'){await load(true);if(!state.error)toast('Plan jest aktualny');return;}
  if(a==='logout'){
-  try{await api('/logout',{method:'POST'});Object.assign(state,{auth:false,children:[],plans:[],selected:'all',page:'plan',error:''});state.loadId++;modal.open&&modal.close();render();}catch(e){toast(e.message);}return;
+  try{await api('/logout',{method:'POST'});Object.assign(state,{auth:false,children:[],plans:[],grades:[],gradesLoaded:false,selected:'all',page:'plan',error:''});state.loadId++;state.gradesId++;modal.open&&modal.close();render();}catch(e){toast(e.message);}return;
  }
  if(a==='color'){$('[name=color]',modal).value=b.dataset.color;modal.querySelectorAll('.swatch').forEach(el=>{el.classList.toggle('selected',el===b);el.setAttribute('aria-pressed',el===b);});return;}
  if(a==='clear-photo'){$('[name=photo]',modal).value='';$('#child-photo').value='';$('.photo-preview',modal).innerHTML='';b.remove();return;}
  if(a==='remove'){
   const c=state.children.find(c=>c.id===b.dataset.id);
-  showDialog(`Usunąć konto ${c.name}?`,`<p class="muted">Zapisane dane logowania i pobrane plany zostaną usunięte z Dzwonka. Konto w Librusie pozostanie bez zmian.</p><div class="form-error" role="alert"></div><div class="form-actions"><button class="btn" data-action="close">Anuluj</button><button class="btn danger" data-action="confirm-remove" data-id="${esc(c.id)}">Usuń</button></div>`);return;
+  showDialog(`Usunąć konto ${c.name}?`,`<p class="muted">Zapisane dane logowania, plany i oceny zostaną usunięte z Dzwonka. Konto w Librusie pozostanie bez zmian.</p><div class="form-error" role="alert"></div><div class="form-actions"><button class="btn" data-action="close">Anuluj</button><button class="btn danger" data-action="confirm-remove" data-id="${esc(c.id)}">Usuń</button></div>`);return;
  }
- if(a==='confirm-remove'){b.disabled=true;try{await api('/children/'+b.dataset.id,{method:'DELETE'});modal.close();await load();toast('Konto zostało usunięte.');}catch(e){$('.form-error',modal).textContent=e.message;b.disabled=false;}return;}
+ if(a==='confirm-remove'){b.disabled=true;try{await api('/children/'+b.dataset.id,{method:'DELETE'});modal.close();state.gradesLoaded=false;await load();toast('Konto zostało usunięte.');}catch(e){$('.form-error',modal).textContent=e.message;b.disabled=false;}return;}
  if(a==='lesson'){
   const p=state.plans.find(p=>p.child.id===b.dataset.id),l=p.lessons[Number(b.dataset.index)];
   showDialog(l.subject,`<p class="muted">${esc(p.child.name)} · ${fmt(new Date(l.date+'T12:00:00'),{weekday:'long',day:'numeric',month:'long'})}</p><dl class="facts"><dt>Godzina</dt><dd>${esc(l.start)} – ${esc(l.end)}${l.number?` · lekcja ${esc(l.number)}`:''}</dd><dt>Sala i nauczyciel</dt><dd>${esc(l.details)||'Brak informacji'}</dd>${l.note?`<dt>Uwagi</dt><dd>${esc(l.note)}</dd>`:''}</dl><div class="form-actions"><button class="btn primary" data-action="close">Zamknij</button></div>`);return;
@@ -241,7 +335,7 @@ document.addEventListener('submit',async e=>{
   const data=Object.fromEntries(new FormData(f));
   if(f.id==='login-form'){await api('/login',{method:'POST',body:JSON.stringify(data)});Object.assign(state,{auth:true,children:[],plans:[],selected:'all',page:'plan',error:''});await load();return;}
   await api('/children'+(f.dataset.id?'/'+f.dataset.id:''),{method:f.dataset.id?'PUT':'POST',body:JSON.stringify(data)});
-  modal.close();await load();toast('Zapisano.');
+  modal.close();state.gradesLoaded=false;await load();toast('Zapisano.');
  }catch(e){error.textContent=e.message;}
  finally{if(f.isConnected){button.disabled=false;button.innerHTML=old;}}
 });
